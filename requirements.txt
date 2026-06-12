@@ -1,0 +1,5 @@
+numpy>=1.24,<2.0
+opencv-python-headless>=4.8
+pycuda>=2022.2
+tensorrt>=10.0
+onnx>=1.14

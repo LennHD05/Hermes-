@@ -1,0 +1,16 @@
+model:
+  name: raft_stereo_small
+  onnx_path: models/raft_stereo_small.onnx
+  engine_path: models/raft_stereo_small_fp16.engine
+  precision: fp16
+  input_size: [640, 480]
+calibration:
+  npz_path: config/calibration.npz
+preprocessing:
+  use_gpu: true
+  mean: [0.485, 0.456, 0.406]
+  std: [0.229, 0.224, 0.225]
+postprocessing:
+  median_kernel: 5
+  temporal_alpha: 0.3
+  max_depth_m: 50.0
