@@ -14,17 +14,36 @@ def convert(onnx_path, engine_path, fp16=True, workspace_mb=2048, trtexec_path=N
     if trtexec is None:
         raise FileNotFoundError("trtexec nicht gefunden. Ist TensorRT installiert?")
 
-    # TRT v10+ uses --memPoolSize=workspace:N instead of --workspace=N
     cmd = [
         trtexec,
         f'--onnx={onnx_path}',
         f'--saveEngine={engine_path}',
         f'--memPoolSize=workspace:{workspace_mb}',
-        '--fp16',
-        '--minShapes=left:1x3x256x384,right:1x3x256x384',
-        '--optShapes=left:1x3x480x640,right:1x3x480x640',
-        '--maxShapes=left:1x3x480x640,right:1x3x480x640',
     ]
+    
+    if fp16:
+        cmd.append('--fp16')
+
+    # Check if ONNX has dynamic shapes by looking at the model
+    # For static models, do NOT pass minShapes/optShapes/maxShapes
+    import onnx
+    model = onnx.load(onnx_path)
+    is_dynamic = False
+    for inp in model.graph.input:
+        for dim in inp.type.tensor_type.shape.dim:
+            if dim.dim_param:  # Has symbolic dimension like "height", "width"
+                is_dynamic = True
+                break
+    
+    if is_dynamic:
+        print("[TRT] Dynamic shapes detected — adding profile flags")
+        cmd += [
+            '--minShapes=left:1x3x256x384,right:1x3x256x384',
+            '--optShapes=left:1x3x480x640,right:1x3x480x640',
+            '--maxShapes=left:1x3x480x640,right:1x3x480x640',
+        ]
+    else:
+        print("[TRT] Static shapes — no profile flags needed")
 
     print(f"[TRT] {' '.join(cmd)}")
     r = subprocess.run(cmd, capture_output=True, text=True)
@@ -49,4 +68,11 @@ if __name__ == '__main__':
     p.add_argument('--workspace', type=int, default=2048)
     p.add_argument('--trtexec', default=None)
     a = p.parse_args()
+    
+    # Check if onnx is available
+    try:
+        import onnx
+    except ImportError:
+        print("[WARN] onnx not installed — cannot detect dynamic shapes, assuming static")
+    
     convert(a.onnx, a.engine, fp16=a.fp16 and not a.int8, workspace_mb=a.workspace, trtexec_path=a.trtexec)
