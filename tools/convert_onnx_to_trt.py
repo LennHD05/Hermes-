@@ -14,11 +14,12 @@ def convert(onnx_path, engine_path, fp16=True, workspace_mb=2048, trtexec_path=N
     if trtexec is None:
         raise FileNotFoundError("trtexec nicht gefunden. Ist TensorRT installiert?")
 
+    # TRT v10+ uses --memPoolSize=workspace:N instead of --workspace=N
     cmd = [
         trtexec,
         f'--onnx={onnx_path}',
         f'--saveEngine={engine_path}',
-        f'--workspace={workspace_mb}',
+        f'--memPoolSize=workspace:{workspace_mb}',
         '--fp16',
         '--minShapes=left:1x3x256x384,right:1x3x256x384',
         '--optShapes=left:1x3x480x640,right:1x3x480x640',
