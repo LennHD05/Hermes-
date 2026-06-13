@@ -40,13 +40,27 @@ class TensorRTInference:
             else:
                 self.outputs.append(info)
 
+    def _execute(self):
+        """Execute inference — compatible with TRT v10 (execute_async_v3)."""
+        # Try v3 first (TRT v10+), fall back to v2 (TRT v8.x)
+        execute_fn = getattr(self.context, 'execute_async_v3', None)
+        if execute_fn is not None:
+            execute_fn(stream_handle=self.stream.handle)
+        else:
+            # TRT v8.x / v9.x
+            v2_fn = getattr(self.context, 'execute_async_v2', None)
+            if v2_fn is not None:
+                v2_fn(bindings=self.bindings, stream_handle=self.stream.handle)
+            else:
+                raise RuntimeError("Weder execute_async_v3 noch execute_async_v2 verfügbar")
+
     def infer(self, left, right):
         """Stereo inference (two inputs)."""
         np.copyto(self.inputs[0]['host'], left.ravel())
         np.copyto(self.inputs[1]['host'], right.ravel())
         self.cuda.memcpy_htod_async(self.inputs[0]['device'], self.inputs[0]['host'], self.stream)
         self.cuda.memcpy_htod_async(self.inputs[1]['device'], self.inputs[1]['host'], self.stream)
-        self.context.execute_async_v2(bindings=self.bindings, stream_handle=self.stream.handle)
+        self._execute()
         for out in self.outputs:
             self.cuda.memcpy_dtoh_async(out['host'], out['device'], self.stream)
         self.stream.synchronize()
@@ -56,7 +70,7 @@ class TensorRTInference:
         """Monocular inference (single input)."""
         np.copyto(self.inputs[0]['host'], tensor.ravel())
         self.cuda.memcpy_htod_async(self.inputs[0]['device'], self.inputs[0]['host'], self.stream)
-        self.context.execute_async_v2(bindings=self.bindings, stream_handle=self.stream.handle)
+        self._execute()
         for out in self.outputs:
             self.cuda.memcpy_dtoh_async(out['host'], out['device'], self.stream)
         self.stream.synchronize()
