@@ -100,6 +100,14 @@ def main():
     else:
         use_cam = False
 
+    # Auto-detect headless mode
+    import os
+    has_display = bool(os.environ.get('DISPLAY', ''))
+    use_display = not a.no_display and has_display
+    
+    if not has_display and not a.no_display:
+        print("[INFO] No display detected — running headless (use --save to save images)")
+
     idx = 0
     try:
         while True:
@@ -115,8 +123,13 @@ def main():
             if a.save:
                 Postprocessor.save_raw(depth, str(out/f'depth_{idx:06d}.npy'))
                 Postprocessor.save_vis(depth, str(out/f'depth_{idx:06d}.png'))
+            elif not use_display:
+                # Headless: save first frame as preview
+                if idx == 0:
+                    Postprocessor.save_vis(depth, str(out/f'depth_preview.png'))
+                    print(f"[INFO] Preview saved: {out}/depth_preview.png")
 
-            if not a.no_display:
+            if use_display:
                 vis = Postprocessor.colorize(depth)
                 txt = f"FPS:{meta['fps']:.1f} Inf:{meta['inference_ms']:.0f}ms"
                 cv2.putText(vis, txt, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0,255,0), 2)
@@ -131,7 +144,7 @@ def main():
             if not use_cam: break
     finally:
         if use_cam: cap.release()
-        if not a.no_display: cv2.destroyAllWindows()
+        if use_display: cv2.destroyAllWindows()
         print(f"{idx} Frames verarbeitet")
 
 if __name__ == '__main__':
