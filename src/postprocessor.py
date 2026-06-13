@@ -25,14 +25,21 @@ class Postprocessor:
 
     @staticmethod
     def save_raw(depth, path):
-        """Save as .npz (compressed, viewer-compatible) or .npy."""
+        """Save as .npz. Depth wird invertiert: nah=niedrig, fern=hoch."""
+        # Invertieren: DA gibt nah=hoch, fern=niedrig
+        # → invertieren damit nah=niedrig, fern=hoch (intuitiv)
+        valid = depth > 0
+        d_min = depth[valid].min() if valid.any() else 0
+        d_max = depth[valid].max() if valid.any() else 1
+        depth_inv = np.zeros_like(depth)
+        depth_inv[valid] = d_max - depth[valid] + d_min
+        
         if path.endswith('.npz'):
-            np.savez_compressed(path, depth=depth)
+            np.savez_compressed(path, depth=depth_inv)
         elif path.endswith('.npy'):
-            np.save(path, depth)
+            np.save(path, depth_inv)
         else:
-            # Default: save as .npz for viewer compatibility
-            np.savez_compressed(path + '.npz', depth=depth)
+            np.savez_compressed(path + '.npz', depth=depth_inv)
 
     @staticmethod
     def save_vis(depth, path):
