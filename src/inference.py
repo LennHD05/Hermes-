@@ -41,10 +41,21 @@ class TensorRTInference:
                 self.outputs.append(info)
 
     def infer(self, left, right):
+        """Stereo inference (two inputs)."""
         np.copyto(self.inputs[0]['host'], left.ravel())
         np.copyto(self.inputs[1]['host'], right.ravel())
         self.cuda.memcpy_htod_async(self.inputs[0]['device'], self.inputs[0]['host'], self.stream)
         self.cuda.memcpy_htod_async(self.inputs[1]['device'], self.inputs[1]['host'], self.stream)
+        self.context.execute_async_v2(bindings=self.bindings, stream_handle=self.stream.handle)
+        for out in self.outputs:
+            self.cuda.memcpy_dtoh_async(out['host'], out['device'], self.stream)
+        self.stream.synchronize()
+        return self.outputs[0]['host'].reshape(self.outputs[0]['shape']).squeeze()
+
+    def infer_single(self, tensor):
+        """Monocular inference (single input)."""
+        np.copyto(self.inputs[0]['host'], tensor.ravel())
+        self.cuda.memcpy_htod_async(self.inputs[0]['device'], self.inputs[0]['host'], self.stream)
         self.context.execute_async_v2(bindings=self.bindings, stream_handle=self.stream.handle)
         for out in self.outputs:
             self.cuda.memcpy_dtoh_async(out['host'], out['device'], self.stream)
