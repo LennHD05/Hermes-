@@ -121,7 +121,7 @@ def main():
             depth, meta = run_frame(img)
 
             if a.save:
-                Postprocessor.save_raw(depth, str(out/f'depth_{idx:06d}.npy'))
+                Postprocessor.save_raw(depth, str(out/f'depth_{idx:06d}.npz'))
                 Postprocessor.save_vis(depth, str(out/f'depth_{idx:06d}.png'))
             elif not use_display:
                 # Headless: save first frame as preview

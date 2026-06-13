@@ -25,7 +25,14 @@ class Postprocessor:
 
     @staticmethod
     def save_raw(depth, path):
-        np.save(path, depth)
+        """Save as .npz (compressed, viewer-compatible) or .npy."""
+        if path.endswith('.npz'):
+            np.savez_compressed(path, depth=depth)
+        elif path.endswith('.npy'):
+            np.save(path, depth)
+        else:
+            # Default: save as .npz for viewer compatibility
+            np.savez_compressed(path + '.npz', depth=depth)
 
     @staticmethod
     def save_vis(depth, path):
