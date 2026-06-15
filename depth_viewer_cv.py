@@ -34,9 +34,17 @@ def pixel_distance(p1, p2):
 class DepthViewerCV:
     def __init__(self, npz_path):
         data = np.load(npz_path)
-        self.depth_raw = data["depth"].astype(np.float32)
-        self.h, self.w = self.depth_raw.shape
+        depth_in = data["depth"].astype(np.float32)
+        self.h, self.w = depth_in.shape
         self.npz_path = npz_path
+
+        # DA-Output: nah=hoch, fern=niedrig → invertieren für Anzeige
+        # Jet-Colormap: blau=nah, rot=fern → nach Invertierung korrekt
+        valid = depth_in > 0
+        d_min = float(depth_in[valid].min()) if valid.any() else 0
+        d_max = float(depth_in[valid].max()) if valid.any() else 1
+        self.depth_raw = np.zeros_like(depth_in)
+        self.depth_raw[valid] = d_max - depth_in[valid] + d_min
 
         # Skalierungsfaktor (roh → Meter)
         # None = nicht kalibriert

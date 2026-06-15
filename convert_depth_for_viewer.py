@@ -1,91 +1,123 @@
 #!/usr/bin/env python3
 """
-Konvertiert monocular Depth-Map .npz in das Format für InteractiveDepthViewer.
-Invertiert die Depth (DA: nah=hoch, fern=niedrig → Viewer: nah=niedrig, fern=hoch)
-und erzeugt synthetische Disparity + Confidence.
+Konvertiert monocular Depth-Map .npz → InteractiveDistanceViewer Format.
+
+Input .npz: disparity (inverse Tiefe, DA: nah=hoch, fern=niedrig)
+             confidence (optional)
+             calib (optional), sonst geladen aus stereo_params_Best.npz
+
+Formel: depth_mm = (fx * baseline_mm) / disparity
+
+Output .npz: depth (mm), disparity (px), confidence (0-1)
 
 Usage:
-    python3 convert_depth_for_viewer.py output/depth_000000.npz /media/data/.../stereo_params_Best.npz
+    python3 convert_depth_for_viewer.py output/depth_000000.npz [stereo_params_Best.npz]
 """
 import sys
+import os
 import numpy as np
 
-def convert(depth_npz_path, calib_npz_path, output_path=None):
-    # Load depth (relative values from Depth Anything, 0-8.5 range)
-    data = np.load(depth_npz_path)
-    depth_raw = data['depth']
-    
-    # Load calibration
-    calib = np.load(calib_npz_path)
-    mtx_l = calib['mtxL']
-    fx = float(mtx_l[0, 0])
-    fy = float(mtx_l[1, 1])
-    cx = float(mtx_l[0, 2])
-    cy = float(mtx_l[1, 2])
-    
-    T = calib['T']
-    baseline_mm = float(abs(T[0]))  # 54.5 mm
-    
-    # Invert depth: DA gibt hohe Werte für nahe Objekte
-    # Viewer erwartet: niedrige Werte = nah, hohe Werte = fern
-    # Also: depth_inverted = max - depth
-    valid_mask = depth_raw > 0
-    depth_min = depth_raw[valid_mask].min() if valid_mask.any() else 0
-    depth_max = depth_raw[valid_mask].max() if valid_mask.any() else 1
-    
-    # Invertieren
-    depth_inv = np.zeros_like(depth_raw)
-    depth_inv[valid_mask] = depth_max - depth_raw[valid_mask] + depth_min
-    
-    # Metrisch skalieren: nutze Baseline + Focal Length
-    # depth_mm = (fx * baseline_mm) / disparity
-    # Wir erzeugen synthetische Disparity aus der invertierten Depth
-    # disparity = (fx * baseline) / depth_mm
-    # Aber wir haben keine echte metrische Depth — also skalieren wir
-    # die invertierten Werte so, dass sie in einem sinnvollen mm-Bereich liegen
-    
-    # Skalierung: Map invertierte Depth auf 100mm - 10000mm Bereich
-    depth_mm = np.zeros_like(depth_inv)
-    if valid_mask.any():
-        d_min = depth_inv[valid_mask].min()
-        d_max = depth_inv[valid_mask].max()
-        if d_max > d_min:
-            # Linear skalieren: 100mm (nah) bis 10000mm (fern)
-            depth_mm[valid_mask] = 100.0 + (depth_inv[valid_mask] - d_min) / (d_max - d_min) * 9900.0
+CALIB_DEFAULT = "/media/data/LaborRobotikSS26/robotic-ss-2026/Sensorics/Stereo-Camera/stereo_params_Best.npz"
+
+
+def convert(input_npz, calib_npz=None, output_path=None):
+    # 1. Load input
+    data = np.load(input_npz)
+
+    # Unterstützt beide Formate:
+    #   A) run_monocular.py Output: disparity + confidence
+    #   B) Altes Format: depth (invertiert, relativ)
+    if "disparity" in data:
+        disparity_raw = data["disparity"].astype(np.float64)
+        confidence = data["confidence"].astype(np.float32) if "confidence" in data else None
+        print("[INFO] Input: disparity + confidence (neues Format)")
+    elif "depth" in data:
+        # Altes Format: invertierte relative Depth → zurück zu Disparity
+        depth_inv = data["depth"].astype(np.float64)
+        valid = depth_inv > 0
+        d_min = depth_inv[valid].min() if valid.any() else 0
+        d_max = depth_inv[valid].max() if valid.any() else 1
+        # Rück-Invertierung: disparity = d_max - depth_inv + d_min
+        disparity_raw = np.zeros_like(depth_inv)
+        disparity_raw[valid] = d_max - depth_inv[valid] + d_min
+        confidence = None
+        print("[INFO] Input: depth (invertiert) → Disparity rückgerechnet")
+    else:
+        print(f"[ERROR] Weder 'disparity' noch 'depth' in {input_npz}")
+        print(f"  Keys: {list(data.keys())}")
+        sys.exit(1)
+
+    # 2. Load calibration
+    if calib_npz is None:
+        calib_npz = CALIB_DEFAULT
+
+    if not os.path.exists(calib_npz):
+        print(f"[WARN] Calib nicht gefunden: {calib_npz}")
+        print("[WARN] Nutze Fallback: fx=1515, baseline=54.5mm")
+        fx = 1515.0
+        baseline_mm = 54.5
+    else:
+        calib = np.load(calib_npz)
+        mtx_l = calib["mtxL"]
+        fx = float(mtx_l[0, 0])
+        fy = float(mtx_l[1, 1])
+        cx = float(mtx_l[0, 2])
+        cy = float(mtx_l[1, 2])
+
+        if "T" in calib:
+            baseline_mm = float(abs(calib["T"][0]))
         else:
-            depth_mm[valid_mask] = 1000.0
-    
-    # Disparity aus metrischer Depth
-    disparity = np.zeros_like(depth_mm)
-    valid_depth = depth_mm > 0
-    disparity[valid_depth] = (fx * baseline_mm) / depth_mm[valid_depth]
-    
-    # Confidence: basiert auf Depth-Qualität
-    # Hohe Disparity = hohe Konfidenz (nahe Objekte)
-    # Niedrige Disparity = niedrige Konfidenz (ferne Objekte)
-    confidence = np.zeros_like(depth_mm, dtype=np.float32)
-    if valid_depth.any():
-        d_valid = disparity[valid_depth]
-        d_max = d_valid.max()
-        if d_max > 0:
-            confidence[valid_depth] = np.clip(d_valid / d_max, 0.1, 1.0)
-    
+            baseline_mm = 54.5
+            print(f"[WARN] Keine Baseline in Calib, nutze Fallback: {baseline_mm}mm")
+
+    print(f"[CALIB] fx={fx:.1f}, baseline={baseline_mm:.1f}mm")
+
+    # 3. Disparity → Depth (metrisch)
+    #    depth_mm = (fx * baseline_mm) / disparity
+    valid_disp = disparity_raw > 0
+    depth_mm = np.zeros_like(disparity_raw)
+    depth_mm[valid_disp] = (fx * baseline_mm) / disparity_raw[valid_disp]
+
+    # Clamp: 10mm - 20000mm (0.01m - 20m)
+    depth_mm = np.clip(depth_mm, 10.0, 20000.0)
+    depth_mm[~valid_disp] = 0.0
+
+    # 4. Confidence (falls nicht geladen)
+    if confidence is None:
+        confidence = np.ones_like(depth_mm, dtype=np.float32)
+        confidence[~valid_disp] = 0.0
+        # Heuristik: sehr nahe oder sehr weit → niedrigere Konfidenz
+        confidence[depth_mm < 100] = 0.5
+        confidence[depth_mm > 10000] = 0.5
+
+    # 5. Disparity für Viewer: echte Disparity in Pixeln
+    #    disparity_viewer = disparity_raw (die DA-Werte sind inverse Disparität,
+    #    aber der Viewer nutzt sie nur für die Colorbar — die Metrik kommt aus depth_mm)
+    disparity_viewer = disparity_raw.astype(np.float32)
+
+    # 6. Save
     if output_path is None:
-        output_path = depth_npz_path.replace('.npz', '_viewer.npz')
-    
-    np.savez_compressed(output_path,
-        depth=depth_mm,
-        disparity=disparity,
+        output_path = input_npz.replace(".npz", "_viewer.npz")
+
+    np.savez_compressed(
+        output_path,
+        depth=depth_mm.astype(np.float32),
+        disparity=disparity_viewer,
         confidence=confidence,
     )
-    
-    print(f"[OK] Gespeichert: {output_path}")
-    print(f"  depth: {depth_mm.shape}, range: {depth_mm[valid_depth].min():.1f} - {depth_mm.max():.1f} mm")
-    print(f"  disparity: {disparity.shape}, range: {disparity[valid_depth].min():.2f} - {disparity.max():.2f} px")
-    print(f"  confidence: {confidence.shape}, range: {confidence[valid_depth].min():.2f} - {confidence.max():.2f}")
 
-if __name__ == '__main__':
-    if len(sys.argv) < 3:
-        print(f"Usage: {sys.argv[0]} <depth.npz> <calibration.npz> [output.npz]")
+    valid = depth_mm > 0
+    print(f"[OK] Gespeichert: {output_path}")
+    print(f"  depth:     {depth_mm.shape}, range: {depth_mm[valid].min():.1f} - {depth_mm[valid].max():.1f} mm")
+    print(f"  disparity: {disparity_viewer.shape}, range: {disparity_viewer[valid_disp].min():.2f} - {disparity_viewer[valid_disp].max():.2f}")
+    print(f"  confidence: {confidence.shape}, range: {confidence[valid].min():.2f} - {confidence[valid].max():.2f}")
+
+
+if __name__ == "__main__":
+    if len(sys.argv) < 2:
+        print(f"Usage: {sys.argv[0]} <depth.npz> [calibration.npz] [output.npz]")
         sys.exit(1)
-    convert(sys.argv[1], sys.argv[2], sys.argv[3] if len(sys.argv) > 3 else None)
+    input_path = sys.argv[1]
+    calib_path = sys.argv[2] if len(sys.argv) > 2 and sys.argv[2].endswith(".npz") else None
+    output_path = sys.argv[3] if len(sys.argv) > 3 else None
+    convert(input_path, calib_path, output_path)

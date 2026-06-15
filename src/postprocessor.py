@@ -2,12 +2,14 @@ import cv2
 import numpy as np
 from typing import Optional
 
+
 class Postprocessor:
     def __init__(self, median_kernel=5, temporal_alpha=0.3):
         self.median_kernel = median_kernel
         self.temporal_alpha = temporal_alpha
 
     def filter(self, depth):
+        """Median-Filter auf Depth-Map."""
         d8 = cv2.normalize(depth, None, 0, 255, cv2.NORM_MINMAX, cv2.CV_8U)
         f = cv2.medianBlur(d8, self.median_kernel).astype(np.float32)
         scale = np.max(depth) / max(np.max(f), 1e-6)
@@ -25,21 +27,17 @@ class Postprocessor:
 
     @staticmethod
     def save_raw(depth, path):
-        """Save as .npz. Depth wird invertiert: nah=niedrig, fern=hoch."""
-        # Invertieren: DA gibt nah=hoch, fern=niedrig
-        # → invertieren damit nah=niedrig, fern=hoch (intuitiv)
-        valid = depth > 0
-        d_min = depth[valid].min() if valid.any() else 0
-        d_max = depth[valid].max() if valid.any() else 1
-        depth_inv = np.zeros_like(depth)
-        depth_inv[valid] = d_max - depth[valid] + d_min
-        
+        """
+        Speichert die rohe Depth-Map (inverse Disparität) als .npz.
+        Das ist das Original-Format aus Depth Anything V2.
+        convert_depth_for_viewer.py rechnet dann in metrische Tiefe um.
+        """
         if path.endswith('.npz'):
-            np.savez_compressed(path, depth=depth_inv)
+            np.savez_compressed(path, depth=depth)
         elif path.endswith('.npy'):
-            np.save(path, depth_inv)
+            np.save(path, depth)
         else:
-            np.savez_compressed(path + '.npz', depth=depth_inv)
+            np.savez_compressed(path + '.npz', depth=depth)
 
     @staticmethod
     def save_vis(depth, path):
